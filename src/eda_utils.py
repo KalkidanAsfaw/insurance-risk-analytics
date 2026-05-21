@@ -10,7 +10,7 @@ import seaborn as sns
 # ---------------------------------------------------------------------------
 
 def descriptive_stats(df: pd.DataFrame) -> pd.DataFrame:
-    """Extended descriptive statistics for all numeric columns.
+    """Compute extended descriptive statistics for all numeric columns.
 
     Supplements the standard ``describe()`` output with skewness, excess
     kurtosis, zero-value count, and zero percentage — useful for spotting
@@ -453,7 +453,7 @@ def cover_type_by_province(df: pd.DataFrame, top_n: int = 5, figsize: tuple = (1
 
 
 def top_makes_by_province(df: pd.DataFrame, top_n: int = 5, figsize: tuple = (14, 6)):
-    """Grouped bar chart of top vehicle makes by province (policy count).
+    """Plot a grouped bar chart of top vehicle makes by province (policy count).
 
     Args:
         df: Source DataFrame.
