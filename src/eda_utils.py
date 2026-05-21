@@ -263,6 +263,227 @@ def correlation_heatmap(df: pd.DataFrame, cols: list, figsize: tuple = (10, 8)):
 
 
 # ---------------------------------------------------------------------------
+# Outlier detection
+# ---------------------------------------------------------------------------
+
+def outlier_summary(df: pd.DataFrame, cols: list) -> pd.DataFrame:
+    """IQR-based outlier counts for a list of numeric columns.
+
+    Args:
+        df: Source DataFrame.
+        cols: Numeric columns to analyse.
+
+    Returns:
+        DataFrame indexed by column with Q1, Q3, IQR, lower/upper fences,
+        outlier count, and outlier percentage.
+    """
+    records = []
+    for col in cols:
+        s = df[col].dropna()
+        q1, q3 = s.quantile(0.25), s.quantile(0.75)
+        iqr = q3 - q1
+        lower, upper = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+        n_out = int(((s < lower) | (s > upper)).sum())
+        records.append({
+            "column": col,
+            "Q1": round(q1, 4),
+            "Q3": round(q3, 4),
+            "IQR": round(iqr, 4),
+            "lower_fence": round(lower, 4),
+            "upper_fence": round(upper, 4),
+            "outlier_count": n_out,
+            "outlier_pct": round(n_out / len(s) * 100, 2),
+        })
+    return pd.DataFrame(records).set_index("column")
+
+
+def plot_boxplots(
+    df: pd.DataFrame, cols: list, log_scale: bool = False, figsize: tuple = (16, 5)
+):
+    """Side-by-side box plots for a list of numeric columns.
+
+    Args:
+        df: Source DataFrame.
+        cols: Numeric columns to plot.
+        log_scale: Apply log1p transform before plotting (useful for skewed data).
+        figsize: Figure size.
+
+    Returns:
+        matplotlib Figure.
+    """
+    n = len(cols)
+    fig, axes = plt.subplots(1, n, figsize=figsize)
+    if n == 1:
+        axes = [axes]
+    for ax, col in zip(axes, cols):
+        vals = df[col].dropna()
+        if log_scale:
+            import math
+            data = vals[vals > 0].apply(math.log1p)
+        else:
+            data = vals
+        ax.boxplot(data, vert=True, patch_artist=True,
+                   boxprops=dict(facecolor="steelblue", alpha=0.6))
+        label = f"log1p({col})" if log_scale else col
+        ax.set_title(label, fontsize=9)
+        ax.set_xticks([])
+    fig.suptitle("Box Plots" + (" (log scale)" if log_scale else ""), y=1.01)
+    fig.tight_layout()
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# Bivariate helpers
+# ---------------------------------------------------------------------------
+
+def scatter_premium_vs_claims(
+    df: pd.DataFrame,
+    group_col: str = "PostalCode",
+    top_n: int = 8,
+    sample: int = 20_000,
+    figsize: tuple = (10, 6),
+):
+    """Scatter plot of TotalPremium vs TotalClaims coloured by a group column.
+
+    Subsets to rows where both columns are positive, draws a random sample
+    for readability, and colours points by the top N groups.
+
+    Args:
+        df: Source DataFrame.
+        group_col: Column used for colour grouping (e.g. ``PostalCode``, ``Province``).
+        top_n: Number of top groups to colour distinctly; rest labelled 'Other'.
+        sample: Maximum rows to plot (random sample if df is larger).
+        figsize: Figure size.
+
+    Returns:
+        matplotlib Figure.
+    """
+    plot_df = df[(df["TotalPremium"] > 0) & (df["TotalClaims"] > 0)].copy()
+    if len(plot_df) > sample:
+        plot_df = plot_df.sample(sample, random_state=42)
+
+    top_groups = plot_df[group_col].value_counts().head(top_n).index
+    plot_df["_group"] = plot_df[group_col].where(
+        plot_df[group_col].isin(top_groups), other="Other"
+    ).astype(str)
+
+    fig, ax = plt.subplots(figsize=figsize)
+    palette = plt.cm.tab10.colors
+    for i, grp in enumerate(list(top_groups.astype(str)) + ["Other"]):
+        sub = plot_df[plot_df["_group"] == grp]
+        color = palette[i % len(palette)] if grp != "Other" else "lightgrey"
+        ax.scatter(
+            sub["TotalPremium"], sub["TotalClaims"],
+            s=15, alpha=0.5, color=color, label=grp
+        )
+    ax.set_xlabel("TotalPremium")
+    ax.set_ylabel("TotalClaims")
+    ax.set_title(f"TotalPremium vs TotalClaims — coloured by {group_col}")
+    ax.legend(title=group_col, bbox_to_anchor=(1.01, 1), loc="upper left", fontsize=8)
+    fig.tight_layout()
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# Geographic helpers
+# ---------------------------------------------------------------------------
+
+def premium_by_province(df: pd.DataFrame, figsize: tuple = (12, 5)):
+    """Bar chart of total and mean TotalPremium by Province.
+
+    Args:
+        df: Source DataFrame.
+        figsize: Figure size.
+
+    Returns:
+        matplotlib Figure.
+    """
+    grp = df.groupby("Province", observed=True)["TotalPremium"].agg(
+        Total="sum", Mean="mean", Count="count"
+    ).sort_values("Total", ascending=False).reset_index()
+
+    fig, axes = plt.subplots(1, 2, figsize=figsize)
+    axes[0].barh(grp["Province"], grp["Total"] / 1e6, color="steelblue")
+    axes[0].set_xlabel("Total Premium (millions)")
+    axes[0].set_title("Total Premium by Province")
+
+    axes[1].barh(grp["Province"], grp["Mean"], color="darkorange")
+    axes[1].set_xlabel("Mean Premium per Policy")
+    axes[1].set_title("Mean Premium by Province")
+
+    fig.tight_layout()
+    return fig
+
+
+def cover_type_by_province(df: pd.DataFrame, top_n: int = 5, figsize: tuple = (14, 6)):
+    """Stacked bar chart showing cover type mix across provinces.
+
+    Args:
+        df: Source DataFrame.
+        top_n: Number of top cover types to show; rest grouped as 'Other'.
+        figsize: Figure size.
+
+    Returns:
+        matplotlib Figure.
+    """
+    top_covers = df["CoverType"].value_counts().head(top_n).index
+    df2 = df.copy()
+    df2["CoverTypeBucket"] = df2["CoverType"].where(
+        df2["CoverType"].isin(top_covers), other="Other"
+    )
+    pivot = (
+        df2.groupby(["Province", "CoverTypeBucket"], observed=True)
+        .size()
+        .unstack(fill_value=0)
+    )
+    pivot_pct = pivot.div(pivot.sum(axis=1), axis=0) * 100
+    pivot_pct = pivot_pct.loc[
+        df["Province"].value_counts().index  # sort by policy count
+    ]
+
+    fig, ax = plt.subplots(figsize=figsize)
+    pivot_pct.plot(kind="bar", stacked=True, ax=ax, colormap="tab10")
+    ax.set_xlabel("Province")
+    ax.set_ylabel("% of Policies")
+    ax.set_title("Cover Type Mix by Province")
+    ax.legend(title="Cover Type", bbox_to_anchor=(1.01, 1), loc="upper left", fontsize=8)
+    ax.tick_params(axis="x", rotation=45)
+    fig.tight_layout()
+    return fig
+
+
+def top_makes_by_province(df: pd.DataFrame, top_n: int = 5, figsize: tuple = (14, 6)):
+    """Grouped bar chart of top vehicle makes by province (policy count).
+
+    Args:
+        df: Source DataFrame.
+        top_n: Number of top makes to show.
+        figsize: Figure size.
+
+    Returns:
+        matplotlib Figure.
+    """
+    top_makes = df["make"].value_counts().head(top_n).index
+    sub = df[df["make"].isin(top_makes)]
+    pivot = (
+        sub.groupby(["Province", "make"], observed=True)
+        .size()
+        .unstack(fill_value=0)
+    )
+    pivot = pivot.loc[df["Province"].value_counts().index]
+
+    fig, ax = plt.subplots(figsize=figsize)
+    pivot.plot(kind="bar", ax=ax, colormap="tab20")
+    ax.set_xlabel("Province")
+    ax.set_ylabel("Policy Count")
+    ax.set_title(f"Top {top_n} Vehicle Makes by Province")
+    ax.legend(title="Make", bbox_to_anchor=(1.01, 1), loc="upper left", fontsize=8)
+    ax.tick_params(axis="x", rotation=45)
+    fig.tight_layout()
+    return fig
+
+
+# ---------------------------------------------------------------------------
 # Temporal helpers
 # ---------------------------------------------------------------------------
 
