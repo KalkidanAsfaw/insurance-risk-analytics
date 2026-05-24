@@ -1,0 +1,17 @@
+stages:
+  prepare_raw:
+    cmd: python3 src/prepare_data.py --stage raw
+    deps:
+      - src/prepare_data.py
+      - src/data_loader.py
+      - data/MachineLearningRating_v3.txt
+    outs:
+      - data/insurance_data.csv
+
+  clean:
+    cmd: python3 src/prepare_data.py --stage clean
+    deps:
+      - src/prepare_data.py
+      - data/insurance_data.csv
+    outs:
+      - data/insurance_data_cleaned.csv

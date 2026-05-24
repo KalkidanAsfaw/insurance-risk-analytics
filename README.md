@@ -23,6 +23,7 @@ insurance-risk-analytics/
 │   ├── __init__.py
 │   ├── data_loader.py   # Data ingestion utilities
 │   ├── eda_utils.py     # EDA helper functions
+│   ├── prepare_data.py  # DVC pipeline stages (raw → cleaned)
 │   ├── hypothesis_tests.py
 │   └── modeling.py
 ├── tests/               # Unit tests (pytest)
@@ -48,14 +49,46 @@ source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### Data
+### Data Pipeline
 
-Raw data is tracked with [DVC](https://dvc.org/). Place the source CSV (`MachineLearningRating_v3.txt`) inside `data/raw/` before running notebooks.
+Data is versioned with [DVC](https://dvc.org/). The pipeline produces two dataset versions from the original source file:
+
+| Version | File | Description |
+|---|---|---|
+| Raw | `data/insurance_data.csv` | Source file converted to standard CSV (1,000,098 rows × 52 cols) |
+| Cleaned | `data/insurance_data_cleaned.csv` | 7 high-missing columns dropped, 4 imputed, 628 bad rows removed (999,470 rows × 45 cols) |
+
+#### Reproduce the pipeline from scratch
 
 ```bash
-# If a DVC remote is configured:
+# 1. Pull the tracked source file from DVC remote
+dvc pull
+
+# 2. Re-run all pipeline stages (raw → cleaned)
+dvc repro
+
+# 3. Push any new outputs back to the remote
+dvc push
+```
+
+#### Pull data only (no reprocessing)
+
+```bash
 dvc pull
 ```
+
+#### Pipeline stages (`dvc.yaml`)
+
+| Stage | Command | Input | Output |
+|---|---|---|---|
+| `prepare_raw` | `src/prepare_data.py --stage raw` | `MachineLearningRating_v3.txt` | `insurance_data.csv` |
+| `clean` | `src/prepare_data.py --stage clean` | `insurance_data.csv` | `insurance_data_cleaned.csv` |
+
+The cleaning strategy applied in the `clean` stage:
+- **Dropped** 7 columns with >50% missing values (`CrossBorder`, `NewVehicle`, `WrittenOff`, `Rebuilt`, `Converted`, `NumberOfVehiclesInFleet`, `CustomValueEstimate`)
+- **Imputed** `Bank`, `AccountType`, `Gender`, `MaritalStatus` → `"Not specified"`
+- **Dropped** 628 rows missing vehicle attributes or `CapitalOutstanding`
+- **Removed** exact duplicate rows
 
 ## Usage
 
